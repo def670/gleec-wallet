@@ -1,6 +1,6 @@
 {
-    "name": "Komodo Web Wallet",
-    "short_name": "KomodoWebWallet",
+    "name": "Gleec Web Wallet",
+    "short_name": "GleecWebWallet",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#ffffff",
