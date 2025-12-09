@@ -30,25 +30,11 @@ class WalletsManagerControls extends StatelessWidget {
     return UiPrimaryButton(
       key: const Key('create-wallet-button'),
       height: 50,
-      child: Row(
-        children: [
-          Icon(
-            Icons.add,
-            color: Theme.of(context).textTheme.labelLarge?.color,
-            size: 15,
-          ),
-          Padding(
-            padding: const EdgeInsets.only(left: 10.0),
-            child: Text(
-              LocaleKeys.walletsManagerCreateWalletButton.tr(),
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-          ),
-        ],
+      prefix: const Padding(
+        padding: EdgeInsets.only(right: 10.0),
+        child: Icon(Icons.add, size: 15),
       ),
+      text: LocaleKeys.walletsManagerCreateWalletButton.tr(),
       onPressed: () => onTap(WalletsManagerAction.create),
     );
   }
