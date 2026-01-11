@@ -11,14 +11,27 @@ jobs:
     runs-on: windows-latest
 
     env:
-      # Map your secret into the exact env var the build transformer expects
+      # The transformer expects this *exact* env var name.
+      # The secret is stored as GH_API_PUBLIC_READONLY_TOKEN (repo secret).
       GITHUB_API_PUBLIC_READONLY_TOKEN: ${{ secrets.GH_API_PUBLIC_READONLY_TOKEN }}
 
     steps:
-      - name: Checkout
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+          lfs: true
+
+      - name: Verify token env is present (does NOT print token)
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_API_PUBLIC_READONLY_TOKEN) {
+            Write-Host "OK: GITHUB_API_PUBLIC_READONLY_TOKEN is set (value hidden)."
+          } else {
+            Write-Host "ERROR: GITHUB_API_PUBLIC_READONLY_TOKEN is NOT set."
+            exit 1
+          }
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -27,24 +40,38 @@ jobs:
           cache: true
 
       - name: Flutter doctor
+        shell: pwsh
         run: flutter doctor -v
 
       - name: Enable Windows desktop
+        shell: pwsh
         run: flutter config --enable-windows-desktop
 
       - name: Pub get
+        shell: pwsh
         run: flutter pub get
 
-      - name: Build Windows (Release)
-        run: flutter build windows --release
+      - name: Build Windows (Release) - VERBOSE
+        shell: pwsh
+        run: |
+          flutter build windows --release -v 2>&1 | Tee-Object -FilePath build_windows_verbose.log
+
+      - name: Upload verbose log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-logs
+          path: build_windows_verbose.log
 
       - name: Package build output
+        if: success()
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "dist\GleecDEX-windows-x64.zip" -Force
 
-      - name: Upload artifact
+      - name: Upload Windows artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: GleecDEX-windows-x64
