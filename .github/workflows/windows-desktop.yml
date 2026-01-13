@@ -13,72 +13,54 @@ jobs:
         shell: bash
 
     steps:
-      - name: Checkout
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
+          submodules: recursive
           fetch-depth: 0
 
-      # Prevent line-ending conversion issues that can break custom transformers/tools
-      - name: Git line endings (force LF)
+      - name: Verify submodules / sdk folder exists
         run: |
-          git config --global core.autocrlf false
-          git config --global core.eol lf
-          git config --global advice.detachedHead false
+          echo "Top-level files:"
+          ls -la
+          echo ""
+          echo "Checking for sdk/packages/komodo_wallet_build_transformer ..."
+          if [ ! -d "sdk/packages/komodo_wallet_build_transformer" ]; then
+            echo "ERROR: Missing sdk/packages/komodo_wallet_build_transformer"
+            echo "Submodules may not have pulled correctly. Showing submodule status:"
+            git submodule status || true
+            exit 1
+          fi
+          echo "OK: sdk/packages/komodo_wallet_build_transformer exists."
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          # If your repo needs a specific channel/version, pin it here.
-          channel: "stable"
+          channel: stable
+          flutter-version: "3.38.6"
           cache: true
 
-      - name: Flutter doctor
+      - name: Flutter doctor (for logs)
         run: flutter doctor -v
 
       - name: Flutter pub get
         run: flutter pub get
 
-      # If your project uses build_runner / codegen, do it BEFORE building Windows
-      # (harmless if not needed; if it fails, it will show the real underlying error clearly)
-      - name: Codegen (build_runner)
-        run: |
-          if grep -R "\"build_runner\"" -n pubspec.yaml >/dev/null 2>&1; then
-            flutter pub run build_runner build --delete-conflicting-outputs
-          else
-            echo "No build_runner dependency detected in pubspec.yaml; skipping codegen."
-          fi
-
-      # Clean + rebuild to avoid stale build artifacts in CI
-      - name: Clean
-        run: flutter clean
-
-      - name: Pub get (after clean)
-        run: flutter pub get
-
-      # Build Windows release
       - name: Build Windows (Release)
         run: flutter build windows --release -v
 
-      # Package output as a ZIP artifact
       - name: Create ZIP
         run: |
-          OUT_DIR="build/windows/x64/runner/Release"
-          if [ ! -d "$OUT_DIR" ]; then
-            echo "Expected output folder not found: $OUT_DIR"
-            ls -la build/windows || true
-            ls -la build/windows/x64 || true
-            exit 1
-          fi
-
-          ART_NAME="GleecDEX-windows-x64.zip"
-          rm -f "$ART_NAME"
-          7z a -tzip "$ART_NAME" "./$OUT_DIR/*"
-
-          echo "Created artifact: $ART_NAME"
-          ls -la "$ART_NAME"
+          OUT="GleecDEX-windows-x64.zip"
+          cd build/windows/x64/runner/Release
+          # tar on windows runners can create zip with -a
+          tar -a -c -f "../../../../${OUT}" .
+          cd - >/dev/null
+          ls -la "${OUT}"
 
       - name: Upload artifact (ZIP)
         uses: actions/upload-artifact@v4
         with:
           name: GleecDEX-windows-x64
           path: GleecDEX-windows-x64.zip
+          if-no-files-found: error
