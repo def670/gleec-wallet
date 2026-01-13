@@ -1,94 +1,77 @@
 # .github/workflows/windows-desktop.yml
-name: Windows Desktop Build (GleecDEX)
+name: Windows Desktop
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    branches: ["main"]
 
 jobs:
   build-windows:
-    name: Build Windows x64 (Release)
-    runs-on: windows-2022
-
-    defaults:
-      run:
-        shell: bash
-
-    env:
-      # Fixes: "GitHub token not set. Some build steps may fail."
-      # This is the built-in GitHub Actions token (no extra secret needed).
-      GITHUB_API_PUBLIC_READONLY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    name: Build (Windows)
+    runs-on: windows-latest
 
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
+          submodules: recursive
 
-      - name: Enable long paths (Windows)
+      - name: Init submodules (force)
+        shell: pwsh
         run: |
-          git config --global core.longpaths true
+          git submodule sync --recursive
+          git submodule update --init --recursive
 
-      - name: Verify submodules / sdk folder exists
+      - name: Verify komodo_wallet_build_transformer exists
+        shell: pwsh
         run: |
-          echo "Top-level files:"
-          ls -la
-          echo ""
-          echo "Checking for sdk/packages/komodo_wallet_build_transformer ..."
-          if [ ! -d "sdk/packages/komodo_wallet_build_transformer" ]; then
-            echo "ERROR: Missing sdk/packages/komodo_wallet_build_transformer"
-            echo "Submodules may not have pulled correctly. Showing submodule status:"
-            git submodule status || true
+          if (!(Test-Path "sdk\packages\komodo_wallet_build_transformer\pubspec.yaml")) {
+            Write-Host "Missing sdk\packages\komodo_wallet_build_transformer\pubspec.yaml"
+            Write-Host "Listing sdk\packages:"
+            Get-ChildItem "sdk\packages" -ErrorAction SilentlyContinue
             exit 1
-          fi
-          echo "OK: sdk/packages/komodo_wallet_build_transformer exists."
+          }
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: "3.38.6"
           cache: true
 
-      - name: Flutter doctor (for logs)
+      - name: Flutter doctor
+        shell: pwsh
         run: flutter doctor -v
 
-      - name: Flutter pub get
+      - name: Pub get (root)
+        shell: pwsh
         run: flutter pub get
 
-      - name: Build Windows (Release) with auto-rebuild on coin asset update
+      - name: Build Windows release
+        shell: pwsh
         run: |
-          set +e
-          flutter build windows --release -v 2>&1 | tee build_windows.log
-          EC=${PIPESTATUS[0]}
-          set -e
+          flutter clean
+          flutter pub get
+          flutter build windows --release
 
-          if [ "$EC" -eq 0 ]; then
-            echo "Build succeeded on first attempt."
-            exit 0
-          fi
-
-          # If the known/expected failure happens, rebuild once.
-          if grep -q "Coin assets were updated" build_windows.log; then
-            echo "Detected: Coin assets were updated. Running clean + rebuild..."
-            flutter clean
-            flutter pub get
-            flutter build windows --release -v
-            exit 0
-          fi
-
-          echo "Build failed for an unexpected reason (not coin-assets update)."
-          exit "$EC"
-
-      - name: Create ZIP
+      - name: Package Windows build
+        shell: pwsh
         run: |
-          OUT="GleecDEX-windows-x64.zip"
-          cd build/windows/x64/runner/Release
-          tar -a -c -f "../../../../${OUT}" .
-          cd - >/dev/null
-          ls -la "${OUT}"
+          $ErrorActionPreference = "Stop"
+          $outDir = "build\windows\x64\runner\Release"
+          if (!(Test-Path $outDir)) { throw "Build output not found: $outDir" }
 
-      - name: Upload artifact (ZIP)
+          $zipName = "GleecDEX-windows-x64.zip"
+          if (Test-Path $zipName) { Remove-Item $zipName -Force }
+
+          Compress-Archive -Path "$outDir\*" -DestinationPath $zipName
+          Write-Host "Created $zipName"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: GleecDEX-windows-x64
