@@ -1,78 +1,84 @@
 name: Windows Desktop Build (GleecDEX)
 
 on:
-  workflow_dispatch: {}
-  push:
-    tags:
-      - "v*-windows"
+  workflow_dispatch:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    name: Build Windows x64 (Release)
+    runs-on: windows-2022
 
-    env:
-      # The transformer expects this *exact* env var name.
-      # The secret is stored as GH_API_PUBLIC_READONLY_TOKEN (repo secret).
-      GITHUB_API_PUBLIC_READONLY_TOKEN: ${{ secrets.GH_API_PUBLIC_READONLY_TOKEN }}
+    defaults:
+      run:
+        shell: bash
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
-          lfs: true
 
-      - name: Verify token env is present (does NOT print token)
-        shell: pwsh
+      # Prevent line-ending conversion issues that can break custom transformers/tools
+      - name: Git line endings (force LF)
         run: |
-          if ($env:GITHUB_API_PUBLIC_READONLY_TOKEN) {
-            Write-Host "OK: GITHUB_API_PUBLIC_READONLY_TOKEN is set (value hidden)."
-          } else {
-            Write-Host "ERROR: GITHUB_API_PUBLIC_READONLY_TOKEN is NOT set."
-            exit 1
-          }
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+          git config --global advice.detachedHead false
 
-      - name: Set up Flutter
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          # If your repo needs a specific channel/version, pin it here.
+          channel: "stable"
           cache: true
 
       - name: Flutter doctor
-        shell: pwsh
         run: flutter doctor -v
 
-      - name: Enable Windows desktop
-        shell: pwsh
-        run: flutter config --enable-windows-desktop
-
-      - name: Pub get
-        shell: pwsh
+      - name: Flutter pub get
         run: flutter pub get
 
-      - name: Build Windows (Release) - VERBOSE
-        shell: pwsh
+      # If your project uses build_runner / codegen, do it BEFORE building Windows
+      # (harmless if not needed; if it fails, it will show the real underlying error clearly)
+      - name: Codegen (build_runner)
         run: |
-          flutter build windows --release -v 2>&1 | Tee-Object -FilePath build_windows_verbose.log
+          if grep -R "\"build_runner\"" -n pubspec.yaml >/dev/null 2>&1; then
+            flutter pub run build_runner build --delete-conflicting-outputs
+          else
+            echo "No build_runner dependency detected in pubspec.yaml; skipping codegen."
+          fi
 
-      - name: Upload verbose log (always)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-build-logs
-          path: build_windows_verbose.log
+      # Clean + rebuild to avoid stale build artifacts in CI
+      - name: Clean
+        run: flutter clean
 
-      - name: Package build output
-        if: success()
-        shell: pwsh
+      - name: Pub get (after clean)
+        run: flutter pub get
+
+      # Build Windows release
+      - name: Build Windows (Release)
+        run: flutter build windows --release -v
+
+      # Package output as a ZIP artifact
+      - name: Create ZIP
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "dist\GleecDEX-windows-x64.zip" -Force
+          OUT_DIR="build/windows/x64/runner/Release"
+          if [ ! -d "$OUT_DIR" ]; then
+            echo "Expected output folder not found: $OUT_DIR"
+            ls -la build/windows || true
+            ls -la build/windows/x64 || true
+            exit 1
+          fi
 
-      - name: Upload Windows artifact
-        if: success()
+          ART_NAME="GleecDEX-windows-x64.zip"
+          rm -f "$ART_NAME"
+          7z a -tzip "$ART_NAME" "./$OUT_DIR/*"
+
+          echo "Created artifact: $ART_NAME"
+          ls -la "$ART_NAME"
+
+      - name: Upload artifact (ZIP)
         uses: actions/upload-artifact@v4
         with:
           name: GleecDEX-windows-x64
-          path: dist/GleecDEX-windows-x64.zip
+          path: GleecDEX-windows-x64.zip
