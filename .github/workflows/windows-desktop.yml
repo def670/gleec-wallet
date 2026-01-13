@@ -1,3 +1,4 @@
+# .github/workflows/windows-desktop.yml
 name: Windows Desktop Build (GleecDEX)
 
 on:
@@ -12,12 +13,21 @@ jobs:
       run:
         shell: bash
 
+    env:
+      # Fixes: "GitHub token not set. Some build steps may fail."
+      # This is the built-in GitHub Actions token (no extra secret needed).
+      GITHUB_API_PUBLIC_READONLY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - name: Enable long paths (Windows)
+        run: |
+          git config --global core.longpaths true
 
       - name: Verify submodules / sdk folder exists
         run: |
@@ -46,14 +56,34 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Build Windows (Release)
-        run: flutter build windows --release -v
+      - name: Build Windows (Release) with auto-rebuild on coin asset update
+        run: |
+          set +e
+          flutter build windows --release -v 2>&1 | tee build_windows.log
+          EC=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$EC" -eq 0 ]; then
+            echo "Build succeeded on first attempt."
+            exit 0
+          fi
+
+          # If the known/expected failure happens, rebuild once.
+          if grep -q "Coin assets were updated" build_windows.log; then
+            echo "Detected: Coin assets were updated. Running clean + rebuild..."
+            flutter clean
+            flutter pub get
+            flutter build windows --release -v
+            exit 0
+          fi
+
+          echo "Build failed for an unexpected reason (not coin-assets update)."
+          exit "$EC"
 
       - name: Create ZIP
         run: |
           OUT="GleecDEX-windows-x64.zip"
           cd build/windows/x64/runner/Release
-          # tar on windows runners can create zip with -a
           tar -a -c -f "../../../../${OUT}" .
           cd - >/dev/null
           ls -la "${OUT}"
