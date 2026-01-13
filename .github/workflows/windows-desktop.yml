@@ -1,13 +1,11 @@
-# .github/workflows/windows-desktop.yml
 name: Windows Desktop
 
 on:
   workflow_dispatch:
   push:
+    branches: [ "main" ]
     tags:
       - "v*"
-  pull_request:
-    branches: ["main"]
 
 jobs:
   build-windows:
@@ -21,59 +19,51 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Init submodules (force)
-        shell: pwsh
+      - name: Show submodule status (debug)
+        shell: bash
         run: |
-          git submodule sync --recursive
-          git submodule update --init --recursive
+          git submodule status --recursive || true
+          ls -la
+          ls -la sdk || true
+          ls -la sdk/packages || true
+          ls -la sdk/packages/komodo_wallet_build_transformer || true
 
-      - name: Verify komodo_wallet_build_transformer exists
-        shell: pwsh
-        run: |
-          if (!(Test-Path "sdk\packages\komodo_wallet_build_transformer\pubspec.yaml")) {
-            Write-Host "Missing sdk\packages\komodo_wallet_build_transformer\pubspec.yaml"
-            Write-Host "Listing sdk\packages:"
-            Get-ChildItem "sdk\packages" -ErrorAction SilentlyContinue
-            exit 1
-          }
-
-      - name: Setup Flutter
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: "3.38.6"
+          channel: "stable"
           cache: true
 
-      - name: Flutter doctor
-        shell: pwsh
+      - name: Flutter doctor (debug)
+        shell: bash
         run: flutter doctor -v
 
       - name: Pub get (root)
-        shell: pwsh
+        shell: bash
         run: flutter pub get
 
-      - name: Build Windows release
-        shell: pwsh
+      - name: Build Windows Release
+        shell: bash
+        run: flutter build windows --release
+
+      - name: Package build output (zip)
+        shell: bash
         run: |
-          flutter clean
-          flutter pub get
-          flutter build windows --release
-
-      - name: Package Windows build
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $outDir = "build\windows\x64\runner\Release"
-          if (!(Test-Path $outDir)) { throw "Build output not found: $outDir" }
-
-          $zipName = "GleecDEX-windows-x64.zip"
-          if (Test-Path $zipName) { Remove-Item $zipName -Force }
-
-          Compress-Archive -Path "$outDir\*" -DestinationPath $zipName
-          Write-Host "Created $zipName"
+          mkdir -p dist
+          cd build/windows/x64/runner/Release
+          7z a -tzip ../../../dist/GleecDEX-windows-x64.zip .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: GleecDEX-windows-x64
-          path: GleecDEX-windows-x64.zip
-          if-no-files-found: error
+          path: dist/GleecDEX-windows-x64.zip
+
+      - name: Publish GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/GleecDEX-windows-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
