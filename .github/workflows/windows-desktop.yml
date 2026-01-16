@@ -1,68 +1,56 @@
-name: Windows Desktop (Release)
+name: Windows Desktop Build
 
 on:
   workflow_dispatch:
   push:
     tags:
-      - "v*"
-
-permissions:
-  contents: write
+      - 'v*-windows'
 
 jobs:
   build-windows:
     runs-on: windows-2022
 
+    env:
+      FLUTTER_VERSION: 3.38.6
+      GITHUB_API_PUBLIC_READONLY_TOKEN: ${{ secrets.GH_API_PUBLIC_READONLY_TOKEN }}
+
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           submodules: recursive
+          fetch-depth: 0
 
-      - name: Ensure submodules are up to date
-        shell: pwsh
-        run: |
-          git config --system core.longpaths true
-          git submodule sync --recursive
-          git submodule update --init --recursive
-
-      - name: Setup Flutter
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
-          flutter-version: "3.38.6"
           cache: true
 
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
       - name: Flutter doctor
-        shell: pwsh
         run: flutter doctor -v
 
-      - name: Pub get
-        shell: pwsh
+      - name: Get dependencies
         run: flutter pub get
 
-      - name: Build Windows release
-        shell: pwsh
-        env:
-          # This is the missing variable your logs complain about
-          GITHUB_API_PUBLIC_READONLY_TOKEN: ${{ github.token }}
+      - name: Build Windows (release)
         run: flutter build windows --release
 
-      - name: Package ZIP
-        shell: pwsh
+      - name: Prepare release bundle
+        shell: bash
         run: |
-          $outDir = "build\windows\x64\runner\Release"
-          if (!(Test-Path $outDir)) {
-            Write-Host "ERROR: Build output not found at $outDir"
-            Get-ChildItem -Recurse build\windows -ErrorAction SilentlyContinue | Select-Object FullName
-            exit 1
-          }
-          $zip = "GleecDEX-windows-x64.zip"
-          if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive -Path "$outDir\*" -DestinationPath $zip
-          Write-Host "Created $zip"
-          Get-Item $zip | Format-List
+          mkdir -p release
+          cp -r build/windows/x64/runner/Release/* release/
+
+      - name: Zip Windows release
+        shell: bash
+        run: |
+          cd release
+          zip -r ../GleecDEX-windows-x64.zip .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -70,7 +58,7 @@ jobs:
           name: GleecDEX-windows-x64
           path: GleecDEX-windows-x64.zip
 
-      - name: Attach to GitHub Release (tags only)
+      - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
