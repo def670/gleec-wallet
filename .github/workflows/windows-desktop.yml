@@ -1,53 +1,78 @@
-  url_launcher 6.3.1 (6.3.2 available)
-64
-  url_launcher_web 2.4.1 (2.4.2 available)
-65
-  uuid 4.5.1 (4.5.2 available)
-66
-  video_player_avfoundation 2.8.9 (2.8.10 available)
-67
-Got dependencies!
-68
-2 packages are discontinued.
-69
-42 packages have newer versions incompatible with dependency constraints.
-70
-Try `flutter pub outdated` for more information.
-71
-Building Windows application...                                 
-72
-CMake Deprecation Warning at D:/a/gleec-wallet/gleec-wallet/build/windows/x64/extracted/firebase_cpp_sdk_windows/CMakeLists.txt:17 (cmake_minimum_required):
-73
-  Compatibility with CMake < 3.10 will be removed from a future version of
-74
-  CMake.
-75
-  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
-76
-  to tell CMake that the project requires at least <min> but has been updated
-77
-  to work with policies introduced by <max> or earlier.
-81
-CMake Warning (dev) at flutter/ephemeral/.plugin_symlinks/flutter_inappwebview_windows/windows/CMakeLists.txt:31 (add_custom_command):
-82
-  The following keywords are not supported when using
-83
-  add_custom_command(TARGET): DEPENDS.
-84
-  Policy CMP0175 is not set: add_custom_command() rejects invalid arguments.
-85
-  Run "cmake --help-policy CMP0175" for policy details.  Use the cmake_policy
-86
-  command to set the policy and suppress this warning.
-87
-This warning is for project developers.  Use -Wno-dev to suppress it.
-90
-Target release_bundle_windows-x64_assets failed : error : User-defined transformation of asset "packages/komodo_defi_framework/assets/transformer_invoker.txt" failed. [D:\a\gleec-wallet\gleec-wallet\build\windows\x64\flutter\flutter_assemble.vcxproj]
-91
-C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Microsoft\VC\v170\Microsoft.CppCommon.targets(254,5): error MSB8066: Custom build for 'D:\a\gleec-wallet\gleec-wallet\build\windows\x64\CMakeFiles\698a01a9d3135e39fafbdeddc1785844\flutter_windows.dll.rule;D:\a\gleec-wallet\gleec-wallet\build\windows\x64\CMakeFiles\0e85c99fa5b3326987f5ef71c967ab12\flutter_assemble.rule;D:\a\gleec-wallet\gleec-wallet\windows\flutter\CMakeLists.txt' exited with code 1. [D:\a\gleec-wallet\gleec-wallet\build\windows\x64\flutter\flutter_assemble.vcxproj]
-92
-Building Windows application...                                   200.1s
-93
-Build process failed.
-94
-Error: Process completed with exit code 1.
+name: Windows Desktop Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*-windows'
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.38.6
+          channel: stable
+          cache: true
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      # DEBUG: confirm the token exists (does NOT print the token)
+      - name: Confirm GitHub readonly token is present
+        shell: pwsh
+        env:
+          GITHUB_API_PUBLIC_READONLY_TOKEN: ${{ secrets.GH_API_PUBLIC_READONLY_TOKEN }}
+        run: |
+          if (-not $env:GITHUB_API_PUBLIC_READONLY_TOKEN) {
+            Write-Error "GITHUB_API_PUBLIC_READONLY_TOKEN is NOT set"
+            exit 1
+          }
+          Write-Host ("Token is set. Length: " + $env:GITHUB_API_PUBLIC_READONLY_TOKEN.Length)
+
+      - name: Build Windows (release)
+        shell: pwsh
+        env:
+          # IMPORTANT: set it RIGHT HERE so flutter->cmake->custom command inherits it
+          GITHUB_API_PUBLIC_READONLY_TOKEN: ${{ secrets.GH_API_PUBLIC_READONLY_TOKEN }}
+        run: |
+          flutter build windows --release -v
+
+      - name: Prepare release bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item -Recurse -Force build\windows\x64\runner\Release\* release\
+
+      - name: Zip Windows release
+        shell: pwsh
+        run: |
+          if (Test-Path GleecDEX-windows-x64.zip) { Remove-Item GleecDEX-windows-x64.zip -Force }
+          Compress-Archive -Path release\* -DestinationPath GleecDEX-windows-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GleecDEX-windows-x64
+          path: GleecDEX-windows-x64.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: GleecDEX-windows-x64.zip
