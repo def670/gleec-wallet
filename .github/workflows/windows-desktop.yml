@@ -1,96 +1,87 @@
-name: Windows Desktop Release
+# .github/workflows/windows-desktop.yml
+name: Build Windows x64 (Release)
 
 on:
   workflow_dispatch:
   push:
+    branches: [ "main" ]
     tags:
       - "v*"
-  pull_request:
-    branches: ["main"]
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
-    name: Build Windows x64 (Release)
+    name: Build Windows (release, auto-retry on coin-assets update)
     runs-on: windows-latest
+    timeout-minutes: 60
 
     env:
-      # Your repo secret (you already created it):
-      # Settings -> Secrets and variables -> Actions -> Repository secrets
-      # Name: GH_API_PUBLIC_READONLY_TOKEN
+      # Use your existing repo secret (you already have this set)
       GITHUB_API_PUBLIC_READONLY_TOKEN: ${{ secrets.GH_API_PUBLIC_READONLY_TOKEN }}
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           submodules: recursive
+          fetch-depth: 0
 
-      - name: Ensure submodules are initialized
-        shell: pwsh
-        run: |
-          git submodule sync --recursive
-          git submodule update --init --recursive
-
-      - name: Setup Flutter
+      - name: Setup Flutter (stable)
         uses: subosito/flutter-action@v2
         with:
-          channel: "stable"
-          flutter-version: "3.38.6"
+          channel: stable
           cache: true
 
-      - name: Flutter doctor
+      - name: Flutter doctor (info)
         shell: pwsh
         run: flutter doctor -v
 
-      - name: Fetch Dart/Flutter packages
+      # This repo uses path overrides into ./sdk; make sure it exists and is initialized
+      - name: Ensure SDK submodule is ready
+        shell: pwsh
+        run: |
+          if (!(Test-Path ".\sdk")) { throw "sdk folder missing. Ensure submodules are checked out." }
+          git submodule status
+
+      - name: Pub get
         shell: pwsh
         run: flutter pub get
 
-      # IMPORTANT:
-      # Your build fails with:
-      # "Coin assets were updated... Re-run the build process..."
-      # So we do a 2-pass build automatically.
-      - name: Build Windows (release, auto-retry on coin-assets update)
+      # Workaround for the "Coin assets were updated. Re-run the build process..." failure
+      - name: Build Windows (attempt 1)
+        id: build1
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          flutter clean
+          flutter pub get
+          flutter build windows --release
+
+      - name: Retry build if coin-assets updated
+        if: steps.build1.outcome != 'success'
         shell: pwsh
         run: |
-          $log = "build_windows.log"
-
-          Write-Host "PASS 1 (may fail if coin assets update)"
-          flutter build windows --release -v 2>&1 | Tee-Object -FilePath $log
-
-          if ($LASTEXITCODE -ne 0) {
-            $txt = Get-Content $log -Raw
-            if ($txt -match "Coin assets were updated") {
-              Write-Host "Detected coin-assets update. Running PASS 2..."
-              flutter build windows --release -v
-            } else {
-              Write-Error "Build failed for a reason other than coin-assets update."
-              exit 1
-            }
-          }
+          Write-Host "Build attempt 1 failed. Retrying once (common for coin-assets update)..."
+          flutter clean
+          flutter pub get
+          flutter build windows --release
 
       - name: Package Windows build
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
-          $src = "build/windows/x64/runner/Release"
-          if (!(Test-Path $src)) {
-            $src = "build/windows/runner/Release"
-          }
-          if (!(Test-Path $src)) {
-            Write-Error "Could not find Release output folder."
-            Get-ChildItem -Recurse build/windows | Select-Object -First 200 | Format-List
-            exit 1
-          }
-
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $zip = "dist/GleecDEX-windows-x64.zip"
 
+          # Standard Flutter output for Windows desktop release
+          $src = "build\windows\x64\runner\Release"
+          if (!(Test-Path $src)) { throw "Expected build output not found: $src" }
+
+          $zip = "dist\GleecDEX-windows-x64.zip"
           if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive -Path "$src\*" -DestinationPath $zip -Force
 
+          Compress-Archive -Path "$src\*" -DestinationPath $zip
           Write-Host "Created $zip"
           Get-ChildItem dist
 
@@ -100,3 +91,9 @@ jobs:
           name: GleecDEX-windows-x64
           path: dist/GleecDEX-windows-x64.zip
           if-no-files-found: error
+
+      - name: Upload ZIP to GitHub Release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/GleecDEX-windows-x64.zip
